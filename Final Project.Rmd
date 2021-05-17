@@ -1,0 +1,177 @@
+---
+title: "Practical Machine Learning Final Project"
+author: "Wondimu Ahmed"
+date: "5/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+setwd("~/PracticalML")
+```
+# Background
+"Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset)".[Text directly taken from template for the assignment]
+
+# Project Goal
+The goal of this project is to predict the manner in which the particpants did the exercise. This is the “classe” variable in the training set. We are expected to use varaibles other than "classe" to predict class membership. This report briefly describes the steps in model building and selection, model eveluation and  describes the application of final model used to predict 20 different test cases.
+
+# Loading Data
+```{r, message=FALSE}
+library(tidyr);library(dplyr);library(ggplot2);library(caret);library(glmnet)
+library(ranger);library(arsenal);library(rattle)
+
+set.seed(1552021)
+
+training.url<- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(training.url, destfile = "pml-training.csv", method = "curl")
+
+testing.url<- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(testing.url, destfile = "pml-testing.csv", method = "curl")
+
+training <- read.csv("pml-training.csv", na.strings=c('#DIV/0!', '', 'NA'), stringsAsFactors = F)
+testing  <- read.csv("pml-testing.csv",  na.strings=c('#DIV/0!', '', 'NA'), stringsAsFactors = F)
+```
+
+# Data Preparation 
+##  Missing Data Analysis
+60 variables in both testing and training datasets haver zero missing data; however, 100 varaibles have 98% to 100% missing data
+```{r}
+ColMissData.Train <- apply(training, 2, function(x) sum(is.na(x)/length(x))) 
+table(round(ColMissData.Train, digits = 2)) # rounded to two decimals
+
+ColMissData.Test <- apply(testing, 2, function(x) sum(is.na(x)/length(x))) 
+table(round(ColMissData.Test, digits = 2)) # rounded to two decimals
+```
+
+
+###  Remove missing data: training 
+```{r}
+dim(training)
+training<-training %>%
+    select_if(~ !any(is.na(.)))
+dim(training)
+```
+
+
+###  Remove missing data: testing
+```{r}
+dim(testing)
+testing<-testing%>%
+    select_if(~ !any(is.na(.)))
+dim(testing)
+
+```
+###  Compare the dataframes 
+ It appears that 2 varaibles are not shared. "problem_id" in the testing data and "classe" in the training data are not shared. 
+```{r}
+comparedf(testing, training)
+```
+
+
+###  Delete the first 6 vars from both testing and training data (and "problem_id" from the testing dataset). These varaibles are irrelavant for model building 
+```{r}
+training<- training[,-c(1:6)]  
+testing<- testing[,-c(1:6,60)]  
+dim(training)
+dim(testing)
+```
+
+
+###  Convert outcome varaible to factor
+```{r}
+training$classe<- factor(training$classe)
+comparedf(testing, training)
+```
+
+# Modeling
+ Although there are a number of machine learning algorithms that can be used for classification tasks, in this assignment we are going to use: Decision Trees, Random Forest and Support Vector Machine. We will use 5-fold Cross Validation.
+
+## Partition training data to: mytrain & mytest
+```{r}
+TrainMe <- createDataPartition(y=training$classe, p=0.6, list=F)
+mytrain <- training[TrainMe,]
+mytest <- training[-TrainMe,]
+```
+
+## Setup Cross-validation. 
+```{r}
+control <- trainControl(method="cv", number=5, verboseIter=F)
+```
+
+## Modeling Using Decision Trees
+```{r}
+MyDT <- train(classe~., data=mytrain, method="rpart", trControl = control, tuneLength = 5)
+fancyRpartPlot(MyDT$finalModel)
+```
+
+## Decision Trees Prediction
+```{r}
+MyPredDT <- predict(MyDT, mytest)
+MyCM.DT <- confusionMatrix(MyPredDT, factor(mytest$classe))
+MyCM.DT 
+```
+## Modeling Using Random Forest
+```{r}
+MyRF <- train(classe~., data=mytrain, method="rf", trControl = control, tuneLength = 5)
+
+```
+
+## Random Forest Prediction
+```{r}
+MyPredRF <- predict(MyRF, mytest)
+MyCM.RF <- confusionMatrix(MyPredRF, factor(mytest$classe))
+MyCM.RF
+```
+
+## Modeling Using Support Vector Machine 
+```{r}
+MySVM <- train(classe~., data=mytrain, method="svmLinear", trControl = control, tuneLength = 5, verbose = F)
+```
+## Support Vector Machine Prediction
+```{r}
+MyPredSVM <- predict(MySVM , mytest)
+MyCM.SVM <- confusionMatrix(MyPredSVM, factor(mytest$classe))
+MyCM.SVM
+```
+
+# Resulsts
+Out of the three algorithms, Random Forest is the best. It achived the highest accuracy(.995) and the lowest out of sample error rate(.004). We find that to be a sufficient enough model to use for our test sets.
+```{r}
+ModelAccuracy <- data.frame(
+  Model = c('Decision Trees','Support Vector Machine','Random Forest'),
+  Accuracy = rbind(MyCM.DT$overall[1], MyCM.SVM$overall[1], MyCM.RF$overall[1])
+  )
+ggplot(ModelAccuracy, aes(x=Model, y=Accuracy, fill=Model)) +
+    geom_bar(stat='identity') + 
+  ggtitle('Comparison of  Accuracy of the Models') 
+
+```
+
+## Test Final Best model on Testing Data 
+### Avector of classes predicted using the best RF model is shown below
+```{r}
+myRF.test <-predict(MyRF, newdata = testing)
+myRF.test
+```
+## Appendix A: Proportions of excercise classes 
+```{r}
+barchart(prop.table(table(training$classe)))
+```
+
+
+
+## Appendix B: Summary of accuracy measures 
+```{r}
+results <- resamples(list(DT= MyDT, SVM=MySVM,  RF=MyRF))
+summary(results)
+```
+
+
+```{r}
+rm(list=ls())
+```
+
